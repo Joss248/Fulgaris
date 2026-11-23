@@ -1,0 +1,92 @@
+name: CI BEPARTNERS
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validar Laravel y compilar frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      APP_ENV: testing
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ':memory:'
+      DB_URL: ''
+      CACHE_STORE: array
+      SESSION_DRIVER: array
+      QUEUE_CONNECTION: sync
+      MAIL_MAILER: array
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configurar PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, dom, xml, pdo_sqlite, zip
+          tools: composer:v2
+          coverage: none
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Instalar y validar dependencias PHP
+        run: |
+          composer validate --strict
+          composer install --no-interaction --prefer-dist --no-progress
+          composer check-platform-reqs
+
+      - name: Preparar Laravel
+        run: |
+          cp .env.example .env
+          php artisan key:generate --no-interaction
+          php artisan route:list --except-vendor
+
+      - name: Verificar migraciones y seeders en SQLite
+        run: |
+          DB_DATABASE="$(mktemp "$RUNNER_TEMP/bepartners-XXXXXX.sqlite")"
+          export DB_DATABASE
+          trap 'rm -f -- "$DB_DATABASE"' EXIT
+          php artisan migrate --seed --no-interaction
+          php artisan migrate:status --no-interaction
+
+      # Las pruebas de las vistas Blade necesitan el manifiesto de Vite.
+      - name: Instalar y compilar frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          test -s public/build/manifest.json
+
+      - name: Ejecutar pruebas
+        run: php artisan test --log-junit junit.xml
+
+      - name: Publicar compilación
+        uses: actions/upload-artifact@v7
+        with:
+          name: bepartners-frontend
+          path: public/build/
+          if-no-files-found: error
+
+      - name: Publicar reporte de pruebas
+        if: ${{ !cancelled() && hashFiles('junit.xml') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: bepartners-pruebas
+          path: junit.xml
+          if-no-files-found: error
