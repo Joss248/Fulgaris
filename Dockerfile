@@ -62,6 +62,7 @@ COPY --from=backend /var/www/html/ ./
 COPY --from=frontend /build/public/build/ public/build/
 COPY docker/apache.conf /etc/apache2/sites-available/bepartners.conf
 COPY docker/init-postgres.php docker/init-postgres.php
+COPY docker/init-admin.php docker/init-admin.php
 
 RUN chown -R www-data:www-data storage bootstrap/cache \
     && truncate -s 0 /etc/apache2/ports.conf \
@@ -70,4 +71,4 @@ RUN chown -R www-data:www-data storage bootstrap/cache \
     && apache2ctl configtest
 
 EXPOSE 10000
-CMD ["sh", "-ec", "if [ -n \"${BEPARTNERS_INIT_DB:-}\" ]; then php -d display_errors=0 -d log_errors=0 docker/init-postgres.php; fi; exec apache2-foreground"]
+CMD ["sh", "-ec", "if [ -n \"${BEPARTNERS_INIT_DB:-}\" ] && [ -n \"${BEPARTNERS_INIT_ADMIN_DB:-}\" ]; then echo 'BEPARTNERS ADMIN ERROR: habilita solo un inicializador.' >&2; exit 1; fi; if [ -n \"${BEPARTNERS_INIT_DB:-}\" ]; then php -d display_errors=0 -d log_errors=0 docker/init-postgres.php; fi; if [ -n \"${BEPARTNERS_INIT_ADMIN_DB:-}\" ]; then php -d display_errors=0 -d log_errors=0 docker/init-admin.php; fi; unset BEPARTNERS_INIT_ADMIN_DB BEPARTNERS_INIT_ADMIN_NAME BEPARTNERS_INIT_ADMIN_EMAIL BEPARTNERS_INIT_ADMIN_PASSWORD; exec apache2-foreground"]

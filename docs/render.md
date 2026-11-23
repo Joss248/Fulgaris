@@ -103,6 +103,56 @@ las migraciones futuras, especialmente cualquier operación no transaccional
 o que use otra conexión. El bloqueo del inicializador no coordina cambios
 hechos con otros clientes. [Bloqueos de PostgreSQL](https://www.postgresql.org/docs/17/functions-admin.html)
 
+## Alta temporal del primer administrador
+
+Con PostgreSQL ya inicializado, conserva `BEPARTNERS_INIT_DB` retirada,
+`DB_CONNECTION=pgsql` y `DB_URL` con la URL interna de la base académica.
+Verifica el servidor y el nombre en Render. Dos servidores pueden tener
+bases con el mismo nombre.
+
+1. Publica en `develop` y despliega manualmente la imagen nueva con el
+   comando Docker predeterminado y las variables temporales aún ausentes.
+   Confirma que la nueva versión esté **Live** y conserve `/up` como ruta
+   de salud.
+2. En **Environment** de `bepartners-pruebas`, agrega las cuatro variables
+   siguientes y elige **Save and deploy** para reutilizar la imagen ya
+   construida. [Variables de entorno de Render](https://render.com/docs/configure-environment-variables)
+
+   | Variable | Valor |
+   | --- | --- |
+   | `BEPARTNERS_INIT_ADMIN_DB` | Nombre exacto de la base PostgreSQL, sin comillas. Activa el alta. |
+   | `BEPARTNERS_INIT_ADMIN_NAME` | Nombre de la persona responsable de la cuenta, máximo 255 caracteres. |
+   | `BEPARTNERS_INIT_ADMIN_EMAIL` | Correo válido en minúsculas, máximo 255 caracteres. |
+   | `BEPARTNERS_INIT_ADMIN_PASSWORD` | Contraseña única y fuerte, con al menos ocho caracteres, una mayúscula, un número y un símbolo. Guárdala en el gestor de contraseñas del equipo. |
+
+3. Espera `BEPARTNERS ADMIN OK: primera cuenta administrativa creada.`
+   en los logs y verifica que el despliegue quede **Live**. Abre `/login`
+   por HTTPS, inicia sesión con la cuenta y confirma el acceso a `/users`.
+4. Elimina las cuatro variables temporales y aplica **Save and deploy**
+   de nuevo. Verifica `/up` y repite el ingreso a `/users`. El nuevo
+   arranque debe mostrar los mensajes normales de Apache. La cuenta sigue
+   almacenada en PostgreSQL.
+
+El script comprueba PostgreSQL, el nombre exacto y el esquema `public`.
+Verifica las tablas `users` y `roles`, bloquea las escrituras concurrentes
+en `users` durante la transacción y crea la cuenta solo si la tabla está
+vacía. Busca el rol `admin` por nombre y usa el modelo `User` para guardar
+el hash. Si ya hay usuarios, registra `BEPARTNERS ADMIN OMITIDO` y arranca
+Apache sin cambiar cuentas. [Bloqueos de PostgreSQL](https://www.postgresql.org/docs/17/explicit-locking.html)
+
+Si aparece `BEPARTNERS ADMIN ERROR`, ese arranque termina antes de Apache.
+Revisa en privado las variables, el destino, el rol y los permisos de
+lectura, escritura y bloqueo de la credencial de PostgreSQL. Si se agotó
+la espera del bloqueo, espera a que termine la operación en curso antes de
+reintentar. Para volver al arranque normal, retira las cuatro variables y
+redespliega. Si el alta se omitió o el resultado es incierto, verifica la
+cuenta por un acceso autorizado antes de intentar de nuevo.
+
+Mantén la contraseña fuera de Git, los argumentos de compilación, el
+historial de terminal y las capturas de pantalla. Retira las variables
+después del alta. Si la tabla `users` se vacía en el futuro, volver a
+habilitar el mecanismo permitiría crear otra primera cuenta.
+
 ## Prueba local con Docker
 
 Ejecuta estos comandos en una terminal compatible con Bash. Usan SQLite
