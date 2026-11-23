@@ -157,3 +157,70 @@ jobs:
             echo '::error::No se pudo confirmar la solicitud por un fallo de conexión o tiempo de espera. Revisa Render antes de reintentar.'
             exit 1
           fi
+
+  deploy-preprod:
+    name: Solicitar despliegue en Render (preproducción)
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.deleted
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    environment: preproduccion
+    permissions:
+      contents: read
+    concurrency:
+      group: render-preproduccion
+      cancel-in-progress: false
+
+    steps:
+      - name: Comprobar que el commit sigue vigente en main
+        id: branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! head_sha="$(curl --disable --silent --fail --proto '=https' \
+            --connect-timeout 5 --max-time 15 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+            | jq -er '.object.sha | select(test("^[0-9a-f]{40}$"))')"; then
+            echo '::error::No se pudo verificar la punta de main en GitHub.'
+            exit 1
+          fi
+
+          if [[ "$head_sha" != "$GITHUB_SHA" ]]; then
+            echo 'Solicitud omitida. Main ya apunta a otro commit.'
+            exit 0
+          fi
+          echo 'current=true' >> "$GITHUB_OUTPUT"
+
+      - name: Enviar solicitud privada a Render
+        if: steps.branch.outputs.current == 'true'
+        shell: bash
+        env:
+          RENDER_DEPLOY_HOOK_PREPROD: ${{ secrets.RENDER_DEPLOY_HOOK_PREPROD }}
+        run: |
+          if [[ -z "$RENDER_DEPLOY_HOOK_PREPROD" ]]; then
+            echo '::error::Falta el secreto RENDER_DEPLOY_HOOK_PREPROD.'
+            exit 1
+          fi
+          if [[ "$RENDER_DEPLOY_HOOK_PREPROD" != https://api.render.com/deploy/* ]]; then
+            echo '::error::RENDER_DEPLOY_HOOK_PREPROD debe contener un Deploy Hook HTTPS de Render.'
+            exit 1
+          fi
+
+          if http_code="$(curl --disable --silent --request POST --proto '=https' \
+            --connect-timeout 5 --max-time 30 \
+            --url-query "ref=$GITHUB_SHA" --url "$RENDER_DEPLOY_HOOK_PREPROD" \
+            --output /dev/null --write-out '%{http_code}')"; then
+            case "$http_code" in
+              200) echo 'Render inició el despliegue solicitado. El resultado final está pendiente.' ;;
+              202) echo 'Render puso la solicitud en espera. El resultado final está pendiente.' ;;
+              *)
+                echo "::error::Render no confirmó la solicitud (HTTP $http_code)."
+                exit 1
+                ;;
+            esac
+          else
+            echo '::error::No se pudo confirmar la solicitud por un fallo de conexión o tiempo de espera. Revisa Render antes de reintentar.'
+            exit 1
+          fi

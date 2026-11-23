@@ -153,33 +153,45 @@ historial de terminal y las capturas de pantalla. Retira las variables
 después del alta. Si la tabla `users` se vacía en el futuro, volver a
 habilitar el mecanismo permitiría crear otra primera cuenta.
 
-## Despliegue automático a pruebas desde GitHub Actions
+## Despliegues automáticos desde GitHub Actions
 
 El workflow **CI BEPARTNERS** valida Laravel, ejecuta las pruebas y compila
 Vite en pushes a `develop` o `main` y en pull requests dirigidos a esas
 ramas. Publica los artefactos `bepartners-frontend` y
-`bepartners-pruebas`. El job **Solicitar despliegue en Render (pruebas)**
-requiere que ese job termine correctamente y solo se habilita para
-pushes a `develop`.
+`bepartners-pruebas`. Los dos jobs de despliegue dependen de `validate`
+y se habilitan solo tras un push exitosamente validado a su rama.
 
-El job usa el entorno de GitHub `pruebas` y lee
-`RENDER_DEPLOY_HOOK_TEST`, que contiene la URL privada del Deploy Hook de
-`bepartners-pruebas`. Mantén Auto-Deploy desactivado en Render. GitHub
-comprueba que el SHA validado siga siendo la punta de `develop` y envía
-un POST HTTPS para solicitar ese SHA. Render construye su propia imagen
-desde el repositorio. Los artefactos de CI quedan en GitHub. El job de
-despliegue no ejecuta migraciones ni seeders. Si se configura una regla
-de ramas en el entorno `pruebas`, debe permitir `develop`.
+| Rama | Job | Entorno de GitHub | Servicio de Render | Secreto del hook |
+| --- | --- | --- | --- | --- |
+| `develop` | `deploy-test` | `pruebas` | `bepartners-pruebas` | `RENDER_DEPLOY_HOOK_TEST` |
+| `main` | `deploy-preprod` | `preproduccion` | `bepartners-preprod` | `RENDER_DEPLOY_HOOK_PREPROD` |
+
+Cada secreto contiene la URL privada del Deploy Hook de su servicio.
+Mantén **Auto-Deploy** desactivado en ambos servicios y, si se configuran
+reglas de ramas en los entornos de GitHub, permite la rama correspondiente.
+Cada job verifica que el SHA validado siga siendo la punta de su rama
+remota y lo solicita mediante un POST HTTPS. Render construye la imagen
+desde el repositorio y los artefactos de CI quedan en GitHub. Los jobs
+de despliegue no ejecutan migraciones ni seeders.
 [Deploy Hooks de Render](https://render.com/docs/deploy-hooks) · [Entornos de GitHub Actions](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
 
-1. En GitHub, abre **Actions → CI BEPARTNERS** y selecciona la ejecución
-   del push a `develop`. Revisa el job de validación, los artefactos y el
-   mensaje del job de despliegue. Un HTTP `200` indica que Render inició
-   el despliegue. Un `202` indica que quedó en espera. Un mensaje de
-   omisión indica que `develop` ya apuntaba a otro commit al comprobarlo.
-2. En Render, abre **bepartners-pruebas → Deploys**. Localiza el SHA de
-   GitHub y espera a que su estado sea **Live**. Si falla, abre los logs
-   de ese despliegue y revisa la fase de construcción o arranque.
+Para promover una versión, confirma que el SHA de `develop` pasó CI y
+quedó **Live** en `bepartners-pruebas`. Promueve ese commit a `main`
+mediante fast-forward cuando el historial lo permita, o mediante el
+pull request que exijan las reglas del repositorio. Si la fusión genera
+un SHA nuevo, comprueba que su árbol corresponda a la versión revisada.
+El push resultante a `main` vuelve a pasar CI y solicita el despliegue
+del SHA validado en esa rama. Los pull requests solo ejecutan CI.
+
+1. En **GitHub Actions → CI BEPARTNERS**, abre la ejecución del push y
+   anota su SHA. Revisa `validate`, los artefactos y el job de la rama.
+   HTTP `200` indica que Render inició el despliegue. HTTP `202` indica
+   que quedó en espera. El mensaje de omisión indica que la rama ya
+   apuntaba a otro commit al comprobarla.
+2. En **Render → servicio correspondiente → Deploys**, localiza ese SHA
+   y confirma que figure como el despliegue **Live**. El éxito del job en
+   GitHub solo confirma la solicitud. Si Render falla, revisa los logs
+   de construcción y arranque de ese despliegue.
 3. Comprueba que `/up` y `/login` devuelvan HTTP `200` por HTTPS. Estas
    rutas comprueban el servicio activo. Usa también el SHA en Render
    para distinguir el despliegue nuevo de una versión anterior que aún
@@ -190,7 +202,7 @@ rechaza la solicitud. Ante un `401` o `404`, verifica en privado que el
 hook corresponda al servicio y siga vigente. Ante un timeout o una
 conexión interrumpida, revisa **Deploys** antes de reintentar. Render
 podría haber recibido el POST. GitHub serializa los jobs de solicitud
-a este entorno y el cliente no reintenta automáticamente. Un rerun
+a cada entorno por separado y el cliente no reintenta automáticamente. Un rerun
 manual todavía puede generar otra solicitud para el mismo commit.
 
 La API de Render permitiría consultar el estado final sin consola
@@ -206,7 +218,8 @@ Render. [API keys de Render](https://render.com/docs/api-keys) · [Consultar un 
 - **Entrega continua** deja el cambio validado y listo para desplegar,
   con la decisión de promoción en manos del equipo.
 - **Despliegue continuo** automatiza esa promoción. Aquí se solicita
-  automáticamente hacia **pruebas** después de CI en `develop`.
+  automáticamente hacia **pruebas** desde `develop` y hacia
+  **preproducción** desde `main`, después de CI.
 
 ## Prueba local con Docker
 
